@@ -46,7 +46,7 @@ for fileName in files_in_dir:
         print("unzipped: " + fileName)
     elif fileExtension == ".gz":
         with gzip.open(path_to_zip_file, 'rb') as fIn:
-            fOut = open(directory_to_extract_to + fileStem + ".xml", "wb")
+            fOut = open(directory_to_extract_to + fileStem + ".txt", "wb")
             fOut.write( fIn.read() )
             fOut.close()
         print("ungzipped: " + fileName)
@@ -57,6 +57,18 @@ print(f"{bcolors.OKBLUE}unzipped all{bcolors.ENDC}")
 conn = sqlite3.connect("logs.db")
 cursor = conn.cursor()
 
+# cursor.execute("""CREATE TABLE "overworld" (
+#     `x` INTEGER NOT NULL, 
+#     `y` INTEGER NOT NULL, 
+#     `z` INTEGER NOT NULL, 
+#     `interinteraction` TEXT NOT NULL, 
+#     `username` TEXT NOT NULL,
+#     `UUID` TEXT, 
+#     "UNIX_time" INTEGER NOT NULL, 
+#     `block` TEXT)""")
+
+entriesAdded = 0
+duplicatesSkipped = 0
 
 logs_in_dir = [f for f in os.listdir(directory_to_extract_to) if os.path.isfile(os.path.join(directory_to_extract_to, f))]
 for fileName in logs_in_dir:
@@ -64,19 +76,28 @@ for fileName in logs_in_dir:
     with open(filePath, "r") as f:
         content = f.read()
         for match in re.finditer(regexPattern, content):
-            groups = match.groups() # x:0 y:1 z:2 action:3 username:4 date:5 time:6 block:7\n
-            print(f"[{groups[5]} {groups[6]}] {groups[4]} '{groups[3]}' {groups[7]} at {groups[0]} {groups[1]} {groups[2]}")
+            groups = match.groups() # x:0 y:1 z:2 interaction:3 username:4 date:5 time:6 block:7\n
             logData = {
                 'x':        groups[0],
                 'y':        groups[1],
                 'z':        groups[2],
-                'action':   groups[3],
+                'interaction':   groups[3],
                 'username': groups[4],
-                'UNIX':     datetime.datetime.strptime(f"{groups[5]} {groups[6]}","%m/%d/%y %H:%M:%S"),
+                'UNIX':     datetime.datetime.strptime(f"{groups[5]} {groups[6]}","%m/%d/%y %H:%M:%S").timestamp(),
                 'block':    groups[7],
             }
-            cursor.execute("INSERT INTO overworld VALUES (:x, :y, :z, :action, :username, NULL, :UNIX, :block)", logData)
-            conn.commit()
-    
+            cursor.execute("SELECT * FROM overworld WHERE x=:x AND y=:y AND z=:z AND interaction=:interaction AND username=:username AND UNIX_time=:UNIX AND block=:block", logData)
+            duplicates = cursor.fetchall()
+            if len(duplicates) == 0:
+                cursor.execute("INSERT INTO overworld VALUES (:x, :y, :z, :interaction, :username, NULL, :UNIX, :block)", logData)
+                conn.commit()
+                entriesAdded += 1
+                print(f"Added [{groups[5]} {groups[6]}] {groups[4]} '{groups[3]}' {groups[7]} at {groups[0]} {groups[1]} {groups[2]}")
+            else:
+                duplicatesSkipped += 1
+                print(f"{bcolors.BOLD + bcolors.WARNING}Skipped duplicate [{groups[5]} {groups[6]}] {groups[4]} '{groups[3]}' {groups[7]} at {groups[0]} {groups[1]} {groups[2]}{bcolors.ENDC}")
+
+print(f"Successfully added {entriesAdded} entries")
+print(f"{duplicatesSkipped != 0 and bcolors.WARNING or ""}Skipped {duplicatesSkipped} duplicate entries")
 # tying up loose ends
 conn.close()
