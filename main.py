@@ -80,14 +80,16 @@ duplicatesSkipped = 0
 
 for dimension in SQLITE3_DB_TABLES:
     dimensionDir = os.path.join(DIRECTORY_TO_EXTRACT_TO, dimension + "/")
-    logs_in_dir = [f for f in os.listdir(dimensionDir) if os.path.isfile(os.path.join(dimensionDir, f))]
-    for fileName in (pBarFile := tqdm(logs_in_dir)):
+    with open(PROGRESS_LOG, "r") as file:
+        progress=json.load(file)
+    logs_in_dir = [f for f in os.listdir(dimensionDir) if os.path.isfile(os.path.join(dimensionDir, f))] 
+    todo_logs_in_dir = [file for file in logs_in_dir if dimensionDir+file not in progress["files"]]
+    skippedFiles = len(logs_in_dir) - len(todo_logs_in_dir)
+    if skippedFiles > 0:
+        print(f"{bcolors.BOLD + bcolors.WARNING}Skipped {skippedFiles} files, already parsed{bcolors.ENDC}")
+
+    for fileName in (pBarFile := tqdm(todo_logs_in_dir)):
         filePath = dimensionDir + fileName
-        with open(PROGRESS_LOG, "r") as file:
-            progress=json.load(file)
-        if filePath in progress:
-            pBarFile.write(f"{bcolors.BOLD + bcolors.WARNING}Skipped {filePath}, already parsed{bcolors.ENDC}")
-            continue
 
         pBarFile.write(f"Parsing {filePath}")
         with open(filePath, "r") as f:
