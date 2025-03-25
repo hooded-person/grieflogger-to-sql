@@ -14,6 +14,7 @@ DIRECTORY_TO_EXTRACT_TO = os.getenv('DIRECTORY_TO_EXTRACT_TO')
 SQLITE3_DB_FILE = os.getenv('SQLITE3_DB_FILE')
 SQLITE3_DB_TABLES = json.loads(os.getenv('SQLITE3_DB_TABLES'))
 PROGRESS_LOG= os.getenv('PROGRESS_LOG')
+LOG_EVERY = os.getenv('LOG_EVERY') == '1'
 regexPattern = r'(-?\d+)#(-?\d+)#(-?\d+)#(\w)#([^#]*)#(\d{2}\/\d{2}\/\d{2}) (\d{2}:\d{2}:\d{2})#([^,\]]*)'
 
 # assert valid .env
@@ -92,7 +93,7 @@ for dimension in SQLITE3_DB_TABLES:
         with open(filePath, "r") as f:
             content = f.read()
             totalMatches = len(re.findall(regexPattern, content))
-            for match in (pbarMatch := tqdm(re.finditer(regexPattern, content), total=totalMatches)):
+            for match in (pbarMatch := tqdm(re.finditer(regexPattern, content), total=totalMatches, leave=False)):
                 groups = match.groups() # x:0 y:1 z:2 interaction:3 username:4 date:5 time:6 block:7\n
                 logData = {
                     'x':        groups[0],
@@ -109,10 +110,12 @@ for dimension in SQLITE3_DB_TABLES:
                     cursor.execute("INSERT INTO overworld VALUES (:x, :y, :z, :interaction, :username, NULL, :UNIX, :block)", logData)
                     conn.commit()
                     entriesAdded += 1
-                    pbarMatch.write(f"Added [{groups[5]} {groups[6]}] {groups[4]} '{groups[3]}' {groups[7]} at {groups[0]} {groups[1]} {groups[2]}")
+                    if LOG_EVERY:
+                        pbarMatch.write(f"Added [{groups[5]} {groups[6]}] {groups[4]} '{groups[3]}' {groups[7]} at {groups[0]} {groups[1]} {groups[2]}")
                 else:
                     duplicatesSkipped += 1
-                    pbarMatch.write(f"{bcolors.BOLD + bcolors.WARNING}Skipped duplicate [{groups[5]} {groups[6]}] {groups[4]} '{groups[3]}' {groups[7]} at {groups[0]} {groups[1]} {groups[2]}{bcolors.ENDC}")
+                    if LOG_EVERY:
+                        pbarMatch.write(f"{bcolors.BOLD + bcolors.WARNING}Skipped duplicate [{groups[5]} {groups[6]}] {groups[4]} '{groups[3]}' {groups[7]} at {groups[0]} {groups[1]} {groups[2]}{bcolors.ENDC}")
         with open(PROGRESS_LOG, "r") as file:
             progress=json.load(file)
         progress["files"].append(filePath)
