@@ -1,0 +1,8 @@
+.env
+# logs probably contain sensitive info so don't commit them
+/logs
+logs.db
+*.db-journal
+
+# cargo
+/target
