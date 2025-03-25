@@ -10,6 +10,7 @@ width, height = os.get_terminal_size()
 load_dotenv()
 PATH_TO_ZIP_DIR = os.getenv('PATH_TO_ZIP_DIR')
 DIRECTORY_TO_EXTRACT_TO = os.getenv('DIRECTORY_TO_EXTRACT_TO')
+SQLITE3_DB_FILE = os.getenv('SQLITE3_DB_FILE')
 regexPattern = r'(-?\d+)#(-?\d+)#(-?\d+)#(\w)#([^#]*)#(\d{2}\/\d{2}\/\d{2}) (\d{2}:\d{2}:\d{2})#([^,\]]*)'
 
 # assert valid .env
@@ -61,18 +62,18 @@ for fileName in files_in_dir:
         
 print(f"{bcolors.OKBLUE}unzipped all{bcolors.ENDC}")
 # create SQLite db connection
-conn = sqlite3.connect("logs.db")
+conn = sqlite3.connect(SQLITE3_DB_FILE)
 cursor = conn.cursor()
 
-# cursor.execute("""CREATE TABLE "overworld" (
-#     `x` INTEGER NOT NULL, 
-#     `y` INTEGER NOT NULL, 
-#     `z` INTEGER NOT NULL, 
-#     `interinteraction` TEXT NOT NULL, 
-#     `username` TEXT NOT NULL,
-#     `UUID` TEXT, 
-#     "UNIX_time" INTEGER NOT NULL, 
-#     `block` TEXT)""")
+cursor.execute("""CREATE TABLE if not exists "overworld" (
+    `x` INTEGER NOT NULL, 
+    `y` INTEGER NOT NULL, 
+    `z` INTEGER NOT NULL, 
+    `interaction` TEXT NOT NULL, 
+    `username` TEXT NOT NULL,
+    `UUID` TEXT, 
+    "UNIX_time" INTEGER NOT NULL, 
+    `block` TEXT)""")
 
 entriesAdded = 0
 duplicatesSkipped = 0
