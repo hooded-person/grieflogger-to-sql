@@ -1,13 +1,20 @@
 import zipfile, gzip, os, sqlite3, re, datetime
+from dotenv import load_dotenv
+
 # get the current working directory
 current_working_directory = os.getcwd()
 # get terminal size
 width, height = os.get_terminal_size()
 
 # settings
-path_to_zip_dir = current_working_directory + "/logs/archives/"
-directory_to_extract_to = current_working_directory + "/logs/files/"
+load_dotenv()
+PATH_TO_ZIP_DIR = os.getenv('PATH_TO_ZIP_DIR')
+DIRECTORY_TO_EXTRACT_TO = os.getenv('DIRECTORY_TO_EXTRACT_TO')
 regexPattern = r'(-?\d+)#(-?\d+)#(-?\d+)#(\w)#([^#]*)#(\d{2}\/\d{2}\/\d{2}) (\d{2}:\d{2}:\d{2})#([^,\]]*)'
+
+# assert valid .env
+assert os.path.isdir(PATH_TO_ZIP_DIR), "PATH_TO_ZIP_DIR in .env file does not lead to a valid directory"
+assert os.path.isdir(DIRECTORY_TO_EXTRACT_TO), "DIRECTORY_TO_EXTRACT_TO in .env file does not lead to a valid directory"
 
 # terminal colors
 class bcolors:
@@ -31,22 +38,22 @@ def viewColors():
     print(f"{bcolors.UNDERLINE}UNDERLINE{bcolors.ENDC}")
 # viewColors()
 
-files_in_dir = [f for f in os.listdir(path_to_zip_dir) if os.path.isfile(os.path.join(path_to_zip_dir, f))]
+files_in_dir = [f for f in os.listdir(PATH_TO_ZIP_DIR) if os.path.isfile(os.path.join(PATH_TO_ZIP_DIR, f))]
 
 print(f"""unzipping
-{bcolors.BOLD}from: {bcolors.ENDC}"""+path_to_zip_dir+f"""
-{bcolors.BOLD}to: {bcolors.ENDC}"""+directory_to_extract_to)
+{bcolors.BOLD}from: {bcolors.ENDC}"""+PATH_TO_ZIP_DIR+f"""
+{bcolors.BOLD}to: {bcolors.ENDC}"""+DIRECTORY_TO_EXTRACT_TO)
 for fileName in files_in_dir:
     fileStem, fileExtension = os.path.splitext(fileName)
     print("extracting type " + fileExtension)
-    path_to_zip_file = path_to_zip_dir + fileName
+    path_to_zip_file = PATH_TO_ZIP_DIR + fileName
     if fileExtension == ".zip":
         with zipfile.ZipFile(path_to_zip_file, 'r') as zip_ref:
-            zip_ref.extractall(directory_to_extract_to)
+            zip_ref.extractall(DIRECTORY_TO_EXTRACT_TO)
         print("unzipped: " + fileName)
     elif fileExtension == ".gz":
         with gzip.open(path_to_zip_file, 'rb') as fIn:
-            fOut = open(directory_to_extract_to + fileStem + ".txt", "wb")
+            fOut = open(DIRECTORY_TO_EXTRACT_TO + fileStem + ".txt", "wb")
             fOut.write( fIn.read() )
             fOut.close()
         print("ungzipped: " + fileName)
@@ -70,9 +77,9 @@ cursor = conn.cursor()
 entriesAdded = 0
 duplicatesSkipped = 0
 
-logs_in_dir = [f for f in os.listdir(directory_to_extract_to) if os.path.isfile(os.path.join(directory_to_extract_to, f))]
+logs_in_dir = [f for f in os.listdir(DIRECTORY_TO_EXTRACT_TO) if os.path.isfile(os.path.join(DIRECTORY_TO_EXTRACT_TO, f))]
 for fileName in logs_in_dir:
-    filePath = directory_to_extract_to + fileName
+    filePath = DIRECTORY_TO_EXTRACT_TO + fileName
     with open(filePath, "r") as f:
         content = f.read()
         for match in re.finditer(regexPattern, content):
