@@ -1,0 +1,3 @@
+-- database: ./logs.db
+
+SELECT username, COUNT(*) AS value_count FROM overworld GROUP BY username ORDER BY value_count DESC;
