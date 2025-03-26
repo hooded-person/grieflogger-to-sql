@@ -12,14 +12,30 @@ load_dotenv()
 PATH_TO_ZIP_DIR = os.getenv('PATH_TO_ZIP_DIR')
 DIRECTORY_TO_EXTRACT_TO = os.getenv('DIRECTORY_TO_EXTRACT_TO')
 SQLITE3_DB_FILE = os.getenv('SQLITE3_DB_FILE')
-SQLITE3_DB_TABLES = json.loads(os.getenv('SQLITE3_DB_TABLES'))
-PROGRESS_LOG= os.getenv('PROGRESS_LOG')
-LOG_EVERY = os.getenv('LOG_EVERY') == '1'
+try:
+    SQLITE3_DB_TABLES = json.loads(os.getenv('SQLITE3_DB_TABLES'))
+except json.JSONDecodeError as e:
+    raise ValueError(f"Invalid JSON in SQLITE3_DB_TABLES environment variable. Error: {e}") from e
+PROGRESS_LOG_FILE= os.getenv('PROGRESS_LOG_FILE')
+try:
+    BATCH_SIZE = int(os.getenv('BATCH_SIZE'))
+except ValueError as e:
+    raise ValueError(f"Invalid integer in BATCH_SIZE environment variable. Error: {e}") from e
+
+LOG_NONE = os.getenv('LOG_NONE').lower() in ("true", "t", "1")
+LOG_BATCH = os.getenv('LOG_BATCH').lower() in ("true", "t", "1") and not LOG_NONE
+LOG_EVERY = os.getenv('LOG_EVERY').lower() in ("true", "t", "1") and not LOG_NONE
 regexPattern = r'(-?\d+)#(-?\d+)#(-?\d+)#(\w)#([^#]*)#(\d{2}\/\d{2}\/\d{2}) (\d{2}:\d{2}:\d{2})#([^,\]]*)'
 
-# assert valid .env
-assert os.path.isdir(PATH_TO_ZIP_DIR), "PATH_TO_ZIP_DIR in .env file does not lead to a valid directory"
-assert os.path.isdir(DIRECTORY_TO_EXTRACT_TO), "DIRECTORY_TO_EXTRACT_TO in .env file does not lead to a valid directory"
+# assert valid environment variables
+assert os.path.isdir(PATH_TO_ZIP_DIR), "PATH_TO_ZIP_DIR environment variable does not lead to a valid directory"
+assert os.path.isdir(DIRECTORY_TO_EXTRACT_TO), "DIRECTORY_TO_EXTRACT_TO environment variable does not lead to a valid directory"
+assert os.path.isfile(SQLITE3_DB_FILE) and SQLITE3_DB_FILE[-3:] == ".db", "SQLITE3_DB_FILE environment variable is not a valid .db file"
+assert isinstance(SQLITE3_DB_TABLES, list) and all(isinstance(item, str) for item in SQLITE3_DB_TABLES), "SQLITE3_DB_TABLES environment variable should be a list containing strings"
+assert os.path.isfile(PROGRESS_LOG_FILE) and PROGRESS_LOG_FILE[-5:] == ".json", "PROGRESS_LOG_FILE environment variable is not a valid .json file"
+assert os.getenv('LOG_NONE').lower() in ("true", "t", "1") or os.getenv('LOG_NONE').lower() in ("false", "f", "0"), "LOG_NONE environment variable is not an accepted boolean ('true','t','1'/'false','f','0')"
+assert os.getenv('LOG_BATCH').lower() in ("true", "t", "1") or os.getenv('LOG_BATCH').lower() in ("false", "f", "0"), "LOG_BATCH environment variable is not an accepted boolean ('true','t','1'/'false','f','0')"
+assert os.getenv('LOG_EVERY').lower() in ("true", "t", "1") or os.getenv('LOG_EVERY').lower() in ("false", "f", "0"), "LOG_EVERY environment variable is not an accepted boolean ('true','t','1'/'false','f','0')"
 
 # terminal colors
 class bcolors:
@@ -73,20 +89,33 @@ for table in SQLITE3_DB_TABLES:
         `username` TEXT NOT NULL,
         `UUID` TEXT, 
         "UNIX_time" INTEGER NOT NULL, 
-        `block` TEXT)""")
+        `block` TEXT,
+        UNIQUE(x, y, z, interaction, username, UNIX_time, block))
+        """)
 
 entriesAdded = 0
-duplicatesSkipped = 0
+batchCount = 0
 
 for dimension in SQLITE3_DB_TABLES:
     dimensionDir = os.path.join(DIRECTORY_TO_EXTRACT_TO, dimension + "/")
-    with open(PROGRESS_LOG, "r") as file:
-        progress=json.load(file)
-    logs_in_dir = [f for f in os.listdir(dimensionDir) if os.path.isfile(os.path.join(dimensionDir, f))] 
-    todo_logs_in_dir = [file for file in logs_in_dir if dimensionDir+file not in progress["files"]]
+    try:
+        with open(PROGRESS_LOG_FILE, "r") as file:
+            progress=json.load(file)
+    except:
+        progress = json.loads(os.getenv("EMPTY_PROGRESS_LOG"))
+        with open(PROGRESS_LOG_FILE, "w") as file:
+            file.write(os.getenv("EMPTY_PROGRESS_LOG"))
+    try:
+        logs_in_dir = [f for f in os.listdir(dimensionDir) if os.path.isfile(os.path.join(dimensionDir, f))] 
+        todo_logs_in_dir = [file for file in logs_in_dir if dimensionDir+file not in progress["files"]]
+    except:
+        logs_in_dir = []
+        todo_logs_in_dir = []
     skippedFiles = len(logs_in_dir) - len(todo_logs_in_dir)
     if skippedFiles > 0:
         print(f"{bcolors.BOLD + bcolors.WARNING}Skipped {skippedFiles} files, already parsed{bcolors.ENDC}")
+
+    batch = []
 
     for fileName in (pBarFile := tqdm(todo_logs_in_dir)):
         filePath = dimensionDir + fileName
@@ -106,25 +135,36 @@ for dimension in SQLITE3_DB_TABLES:
                     'UNIX':     datetime.datetime.strptime(f"{groups[5]} {groups[6]}","%m/%d/%y %H:%M:%S").timestamp(),
                     'block':    groups[7],
                 }
-                cursor.execute("SELECT * FROM overworld WHERE x=:x AND y=:y AND z=:z AND interaction=:interaction AND username=:username AND UNIX_time=:UNIX AND block=:block", logData)
-                duplicates = cursor.fetchall()
-                if len(duplicates) == 0:
-                    cursor.execute("INSERT INTO overworld VALUES (:x, :y, :z, :interaction, :username, NULL, :UNIX, :block)", logData)
+                
+                batch.append(logData)
+                if LOG_EVERY:
+                    pbarMatch.write(f"Added [{groups[5]} {groups[6]}] {groups[4]} '{groups[3]}' {groups[7]} at {groups[0]} {groups[1]} {groups[2]} to batch")
+
+                if len(batch) > BATCH_SIZE:
+                    cursor.executemany("INSERT OR IGNORE INTO overworld VALUES (:x, :y, :z, :interaction, :username, NULL, :UNIX, :block)", batch)
                     conn.commit()
-                    entriesAdded += 1
-                    if LOG_EVERY:
-                        pbarMatch.write(f"Added [{groups[5]} {groups[6]}] {groups[4]} '{groups[3]}' {groups[7]} at {groups[0]} {groups[1]} {groups[2]}")
-                else:
-                    duplicatesSkipped += 1
-                    if LOG_EVERY:
-                        pbarMatch.write(f"{bcolors.BOLD + bcolors.WARNING}Skipped duplicate [{groups[5]} {groups[6]}] {groups[4]} '{groups[3]}' {groups[7]} at {groups[0]} {groups[1]} {groups[2]}{bcolors.ENDC}")
-        with open(PROGRESS_LOG, "r") as file:
+                    entriesAdded += len(batch)
+                    pbarMatch.write(f"Executed batch {batchCount} with {len(batch)} queries")
+                    batchCount+=1
+                    batch = []
+        
+        if batch:
+            cursor.executemany("INSERT OR IGNORE INTO overworld VALUES (:x, :y, :z, :interaction, :username, NULL, :UNIX, :block)", batch)
+            conn.commit()
+            entriesAdded += len(batch)
+            pbarMatch.write(f"Executed batch {batchCount} with {len(batch)} queries")
+            batchCount+=1
+            batch = []
+
+        with open(PROGRESS_LOG_FILE, "r") as file:
             progress=json.load(file)
         progress["files"].append(filePath)
-        with open(PROGRESS_LOG, "w") as file:
+        with open(PROGRESS_LOG_FILE, "w") as file:
             json.dump(progress, file)
 
+        
+
 print(f"Successfully added {entriesAdded} entries to {len(SQLITE3_DB_TABLES)} tables")
-print(f"{duplicatesSkipped != 0 and bcolors.WARNING or ""}Skipped {duplicatesSkipped} duplicate entries")
+# print(f"{duplicatesSkipped != 0 and bcolors.WARNING or ""}Skipped {duplicatesSkipped} duplicate entries")
 # tying up loose ends
 conn.close()
