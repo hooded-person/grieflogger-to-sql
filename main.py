@@ -25,6 +25,11 @@ except ValueError as e:
 LOG_NONE = os.getenv('LOG_NONE').lower() in ("true", "t", "1")
 LOG_BATCH = os.getenv('LOG_BATCH').lower() in ("true", "t", "1") and not LOG_NONE
 LOG_EVERY = os.getenv('LOG_EVERY').lower() in ("true", "t", "1") and not LOG_NONE
+
+SHOW_MATCH_BAR = os.getenv('SHOW_MATCH_BAR').lower() in ("true", "t", "1")
+SHOW_FILE_FOLDER_BAR = os.getenv('SHOW_FILE_FOLDER_BAR').lower() in ("true", "t", "1")
+
+
 regexPattern = r'(-?\d+)#(-?\d+)#(-?\d+)#(\w)#([^#]*)#(\d{2}\/\d{2}\/\d{2}) (\d{2}:\d{2}:\d{2})#([^,\]]*)'
 
 # assert valid environment variables
@@ -96,7 +101,11 @@ for table in SQLITE3_DB_TABLES:
 entriesAdded = 0
 batchCount = 0
 
-for dimension in SQLITE3_DB_TABLES:
+dimensionData = {
+    "dim":{},
+    "total_files":0,
+}
+for dimension in SQLITE3_DB_TABLES: # calculate total number of files in all dimensions
     dimensionDir = os.path.join(DIRECTORY_TO_EXTRACT_TO, dimension + "/")
     try:
         with open(PROGRESS_LOG_FILE, "r") as file:
@@ -111,20 +120,41 @@ for dimension in SQLITE3_DB_TABLES:
     except:
         logs_in_dir = []
         todo_logs_in_dir = []
+    dimensionData["dim"][dimension] = {}
+    dimensionData["dim"][dimension]["logs_in_dir"] = logs_in_dir
+    dimensionData["dim"][dimension]["todo_logs_in_dir"] = todo_logs_in_dir
+    dimensionData["total_files"] += len(todo_logs_in_dir)
+
+
+pBarMain = tqdm(total=dimensionData["total_files"])
+for i, dimension in enumerate(SQLITE3_DB_TABLES): # actually parse the files
+    dimsDone = str(i+1)
+    dimsTotal = str(len(SQLITE3_DB_TABLES))
+    padZero = len(dimsTotal) - len(dimsDone)
+    dimsDone = padZero*"0" + dimsDone
+    pBarMain.set_description_str(f"{dimsDone}/{dimsTotal} Dimensions")
+    dimensionDir = os.path.join(DIRECTORY_TO_EXTRACT_TO, dimension + "/")
+    
+    logs_in_dir = dimensionData["dim"][dimension]["logs_in_dir"]
+    todo_logs_in_dir = dimensionData["dim"][dimension]["todo_logs_in_dir"]
     skippedFiles = len(logs_in_dir) - len(todo_logs_in_dir)
     if skippedFiles > 0:
         print(f"{bcolors.BOLD + bcolors.WARNING}Skipped {skippedFiles} files, already parsed{bcolors.ENDC}")
 
     batch = []
 
-    for fileName in (pBarFile := tqdm(todo_logs_in_dir)):
+    loopIter = tqdm(todo_logs_in_dir) if SHOW_FILE_FOLDER_BAR  else todo_logs_in_dir
+    for fileName in loopIter:
         filePath = dimensionDir + fileName
 
-        pBarFile.write(f"Parsing {filePath}")
+        pBarMain.write(f"Parsing {filePath}")
         with open(filePath, "r") as f:
             content = f.read()
             totalMatches = len(re.findall(regexPattern, content))
-            for match in (pbarMatch := tqdm(re.finditer(regexPattern, content), total=totalMatches, leave=False)):
+            matches = re.finditer(regexPattern, content)
+            if SHOW_MATCH_BAR:
+                pBarMatch = tqdm(matches, total=totalMatches, leave=False)
+            for match in (not SHOW_MATCH_BAR and matches or pBarMatch):
                 groups = match.groups() # x:0 y:1 z:2 interaction:3 username:4 date:5 time:6 block:7\n
                 logData = {
                     'x':        groups[0],
@@ -138,21 +168,24 @@ for dimension in SQLITE3_DB_TABLES:
                 
                 batch.append(logData)
                 if LOG_EVERY:
-                    pbarMatch.write(f"Added [{groups[5]} {groups[6]}] {groups[4]} '{groups[3]}' {groups[7]} at {groups[0]} {groups[1]} {groups[2]} to batch")
+                    pBarMain.write(f"Added [{groups[5]} {groups[6]}] {groups[4]} '{groups[3]}' {groups[7]} at {groups[0]} {groups[1]} {groups[2]} to batch")
 
                 if len(batch) > BATCH_SIZE:
-                    cursor.executemany("INSERT OR IGNORE INTO overworld VALUES (:x, :y, :z, :interaction, :username, NULL, :UNIX, :block)", batch)
+                    cursor.executemany(f"INSERT OR IGNORE INTO {dimension} VALUES (:x, :y, :z, :interaction, :username, NULL, :UNIX, :block)", batch)
                     conn.commit()
                     entriesAdded += len(batch)
-                    pbarMatch.write(f"Executed batch {batchCount} with {len(batch)} queries")
+                    
+                    pBarMain.write(f"Executed batch {batchCount} with {len(batch)} queries")
                     batchCount+=1
                     batch = []
+                if SHOW_MATCH_BAR:
+                    pBarMatch.close()
         
         if batch:
-            cursor.executemany("INSERT OR IGNORE INTO overworld VALUES (:x, :y, :z, :interaction, :username, NULL, :UNIX, :block)", batch)
+            cursor.executemany(f"INSERT OR IGNORE INTO {dimension} VALUES (:x, :y, :z, :interaction, :username, NULL, :UNIX, :block)", batch)
             conn.commit()
             entriesAdded += len(batch)
-            pbarMatch.write(f"Executed batch {batchCount} with {len(batch)} queries")
+            pBarMain.write(f"Executed batch {batchCount} with {len(batch)} queries")
             batchCount+=1
             batch = []
 
@@ -161,7 +194,8 @@ for dimension in SQLITE3_DB_TABLES:
         progress["files"].append(filePath)
         with open(PROGRESS_LOG_FILE, "w") as file:
             json.dump(progress, file)
-
+        pBarMain.update(1)
+pBarMain.close()
         
 
 print(f"Successfully added {entriesAdded} entries to {len(SQLITE3_DB_TABLES)} tables")
