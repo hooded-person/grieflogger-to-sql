@@ -92,6 +92,7 @@ for table in SQLITE3_DB_TABLES:
         `z` INTEGER NOT NULL, 
         `interaction` TEXT NOT NULL, 
         `username` TEXT NOT NULL,
+        `lower_username` TEXT NOT NULL,
         `UUID` TEXT, 
         "UNIX_time" INTEGER NOT NULL, 
         `block` TEXT,
@@ -162,6 +163,7 @@ for i, dimension in enumerate(SQLITE3_DB_TABLES): # actually parse the files
                     'z':        groups[2],
                     'interaction':   groups[3],
                     'username': groups[4],
+                    'lower_username': groups[4].lower(),
                     'UNIX':     datetime.datetime.strptime(f"{groups[5]} {groups[6]}","%m/%d/%y %H:%M:%S").timestamp(),
                     'block':    groups[7],
                 }
@@ -171,7 +173,7 @@ for i, dimension in enumerate(SQLITE3_DB_TABLES): # actually parse the files
                     pBarMain.write(f"Added [{groups[5]} {groups[6]}] {groups[4]} '{groups[3]}' {groups[7]} at {groups[0]} {groups[1]} {groups[2]} to batch")
 
                 if len(batch) > BATCH_SIZE:
-                    cursor.executemany(f"INSERT OR IGNORE INTO {dimension} VALUES (:x, :y, :z, :interaction, :username, NULL, :UNIX, :block)", batch)
+                    cursor.executemany(f"INSERT OR IGNORE INTO {dimension} VALUES (:x, :y, :z, :interaction, :username, :lower_username, NULL, :UNIX, :block)", batch)
                     conn.commit()
                     entriesAdded += len(batch)
                     
@@ -182,7 +184,7 @@ for i, dimension in enumerate(SQLITE3_DB_TABLES): # actually parse the files
                     pBarMatch.close()
         
         if batch:
-            cursor.executemany(f"INSERT OR IGNORE INTO {dimension} VALUES (:x, :y, :z, :interaction, :username, NULL, :UNIX, :block)", batch)
+            cursor.executemany(f"INSERT OR IGNORE INTO {dimension} VALUES (:x, :y, :z, :interaction, :username, :lower_username, NULL, :UNIX, :block)", batch)
             conn.commit()
             entriesAdded += len(batch)
             pBarMain.write(f"Executed batch {batchCount} with {len(batch)} queries")
