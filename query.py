@@ -108,7 +108,8 @@ paramsSettings = {
         "allowNegative":True,
     },"range":{
         "type":int,
-        "value":"int > 1",
+        "value":lambda x: x > 1,
+        "errorMsg":"{value} is not greater than 1",
         "allowMultiple":False,
         "allowNegative":False,
     },"source":{
@@ -128,28 +129,6 @@ paramsSettings = {
         "allowNegative":False,
 }}
 def identifierParser(identifier, value):
-
-    # if value[0] == "!" and identifier['allowNegative']:
-    #     negative = True
-    #     value = value[1:]
-    # else:
-    #     negative = False
-
-    # if type(value) != identifier['type']:
-    #     match identifier['type']:
-    #         case "int":
-    #             try: 
-    #                 value = int(value)
-    #             except ValueError:
-    #                 # success, error_message
-    #                 return False, "Could not convert to correct type"
-
-    # if type(identifier['value']) == list:
-    #     if value in identifier['value']:
-    #         if negative:
-    #             # success, [(target, value, value_prefix),...]
-    #             return True, [("table", "*"),("table", value, "NOT")]
-
     match identifier:
         case "Action Identifier":
             valid = {
@@ -161,48 +140,114 @@ def identifierParser(identifier, value):
                 "entity-killed":None,
             }
             if value in valid:
-                return not not valid[value], valid[value] or "This Action Identifier is not supported"
+                if not valid[value]:
+                    raise ValueError("This Action Identifier is not supported")
+                return valid[value]
             else:
-                return False, "Not a valid Action Identifier"
+                raise ValueError("Not a valid Action Identifier")
         case "Object Identifier":
             if ":" in value:
                 value = value.split(":",maxsplit=1)[1]
-            return True, value
+            return value
         case "Source Name":
-            return True, value
+            return value.lower()
         case "Time Duration":
-            (week, day, hour, minute, second) = re.search(r'(?:(\d+)w)?(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?', value).groups()
-            print(week, day, hour, minute, second)
-            day = (day or 0) + 7*(week or 0); print(day)
-            hour = (hour or 0) + 24*(day or 0); print(hour)
-            minute = (minute or 0) + 60*(hour or 0); print(minute)
-            second = (second or 0) + 60*(minute or 0); print(second)
+            pattern = r'(?:(\d+)w)?(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?'
+            res = re.search(pattern, value)
+            if res.span()[0] != 0 or res.span()[1] != len(value):
+                raise ValueError(f"{value} is not a valid Time Duration")
+            (week, day, hour, minute, second) = map(int,[time or 0 for time in res.groups()])
+            day += 7 * week
+            hour += 24 * day
+            minute += 60 * hour
+            second += 60 * minute
             epoch = round(time.time())
-            return True, str(epoch - second)
-
+            return str(epoch - second)
+        
+def parse_single_param(key, value):
+    valueType = type(paramsSettings[key]["value"])
+    if valueType == str: # is identifier
+        return identifierParser(paramsSettings[key]["value"], value)
+    isIterable = True
+    try:
+        _ = iter(paramsSettings[key]["value"])
+    except TypeError:
+        isIterable = False 
+    if isIterable:
+        if value in paramsSettings[key]["value"]:
+            return value
+        else:
+            raise ValueError(f"parameter '{key}' has to be one of {paramsSettings[key]["value"]}")
+    if callable(paramsSettings[key]["value"]): # is custom handler
+        returnValue = paramsSettings[key]["value"](value)
+        if type(returnValue) == bool:
+            if returnValue:
+                return value
+            else:
+                raise ValueError(paramsSettings[key]["errorMsg"].format(key = key, value = value))
+        else:
+            return returnValue
 
 
 def process_params(paramsInput):
     paramsList = paramsInput.split(" ")
-    parsedParams = {}
-    for param in paramsList:
-        key, value = param.split(":")
-        identifierParser(key, value)
+    parsedParams = {"action":[],"world":[],"object":[],"range":[],"source":[],"before":[],"after":[]}
+    for i, param in enumerate(paramsList):
+        try:
+            key, value = param.split(":", maxsplit=1)
+        except:
+            continue
+        negative = False
+        if value[0] == "!":
+            if paramsSettings[key]["allowNegative"]:
+                negative = True
+                value = value[1:]
+            else:
+                raise ValueError(f"Parameter '{key}' may not be negative")
+        try:
+            value = parse_single_param(key, value)
+        except ValueError as err:
+            raise ValueError(f"Something went wrong parsing parameter {i+1} ({key}: {value}): {err}") from err
+        
+        if len(parsedParams[key]) > 0 and not paramsSettings[key]["allowMultiple"]:
+            raise ValueError(f"Paramater '{key}' is only allowed once")
+        parsedParams[key].append({"value":value,"negative":negative})
+    return parsedParams
+
+def format_query(pos, params):
+    tables = SQLITE3_DB_TABLES
+    posWorldCheck = False
+    for world in params["world"]:
+        value = world["value"]
+        if value not in SQLITE3_DB_TABLES:
+            raise ValueError(f"world '{value}' is not available (is your .env setup correctly?)")
+        if world["negative"]:
+            tables.remove(value)
+        elif posWorldCheck:
+            tables.append(value)
+        else:
+            tables = [value]
+    tables = "UNION ALL ".join(map(lambda table: f"SELECT * FROM {table} ", tables))
 
 
+
+    dbQuery = f"SELECT * FROM ({tables})"
+    return dbQuery
 
 # Main menu options
-# <search|inspect> <x> <y> <z> <params>
+# <x> <y> <z> <params>
 def query():
     queryInput = input("Enter query:\n")
-    type, pos, paramsInput = re.search( r'(search|inspect)(?: (-?\d+)){3} (.*)',queryInput)
+    try:
+        pos, paramsInput = re.search( r'((?:-?\d+ ?){3})(.*)',queryInput).groups()
+    except AttributeError:
+        raise ValueError("Invalid query")
+    pos = tuple(pos.split(" ", maxsplit=2))
     params = process_params(paramsInput)
 
     print(pos)
-    print(flags)
-    baseQuery = f"SELECT * FROM {flags['dimension']} "
-    posQuery = f" WHERE x={pos[0]} AND y={pos[1]} AND z={pos[2]} "
-    flagQuery = handle_flags
+    print(params)
+    dbQuery = format_query(pos, params)
 
 def player():
     while True:
