@@ -23,8 +23,9 @@ except ValueError as e:
     raise ValueError(f"Invalid integer in BATCH_SIZE environment variable. Error: {e}") from e
 
 LOG_NONE = os.getenv('LOG_NONE').lower() in ("true", "t", "1")
-LOG_BATCH = os.getenv('LOG_BATCH').lower() in ("true", "t", "1") and not LOG_NONE
 LOG_EVERY = os.getenv('LOG_EVERY').lower() in ("true", "t", "1") and not LOG_NONE
+LOG_BATCH = os.getenv('LOG_BATCH').lower() in ("true", "t", "1") and not LOG_NONE
+LOG_FILE = os.getenv('LOG_FILE').lower() in ("true", "t", "1") and not LOG_NONE
 
 SHOW_MATCH_BAR = os.getenv('SHOW_MATCH_BAR').lower() in ("true", "t", "1")
 SHOW_FILE_FOLDER_BAR = os.getenv('SHOW_FILE_FOLDER_BAR').lower() in ("true", "t", "1")
@@ -147,8 +148,8 @@ for i, dimension in enumerate(SQLITE3_DB_TABLES): # actually parse the files
     loopIter = tqdm(todo_logs_in_dir) if SHOW_FILE_FOLDER_BAR  else todo_logs_in_dir
     for fileName in loopIter:
         filePath = dimensionDir + fileName
-
-        pBarMain.write(f"Parsing {filePath}")
+        if LOG_FILE:
+            pBarMain.write(f"Parsing {filePath}")
         with open(filePath, "r") as f:
             content = f.read()
             totalMatches = len(re.findall(regexPattern, content))
@@ -176,8 +177,8 @@ for i, dimension in enumerate(SQLITE3_DB_TABLES): # actually parse the files
                     cursor.executemany(f"INSERT OR IGNORE INTO {dimension} VALUES (:x, :y, :z, :interaction, :username, :lower_username, NULL, :UNIX, :block)", batch)
                     conn.commit()
                     entriesAdded += len(batch)
-                    
-                    pBarMain.write(f"Executed batch {batchCount} with {len(batch)} queries")
+                    if LOG_BATCH:
+                        pBarMain.write(f"Executed batch {batchCount} with {len(batch)} queries")
                     batchCount+=1
                     batch = []
                 if SHOW_MATCH_BAR:
@@ -187,7 +188,8 @@ for i, dimension in enumerate(SQLITE3_DB_TABLES): # actually parse the files
             cursor.executemany(f"INSERT OR IGNORE INTO {dimension} VALUES (:x, :y, :z, :interaction, :username, :lower_username, NULL, :UNIX, :block)", batch)
             conn.commit()
             entriesAdded += len(batch)
-            pBarMain.write(f"Executed batch {batchCount} with {len(batch)} queries")
+            if LOG_BATCH:
+                pBarMain.write(f"Executed batch {batchCount} with {len(batch)} queries")
             batchCount+=1
             batch = []
 
