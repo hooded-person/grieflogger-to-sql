@@ -165,6 +165,12 @@ def identifierParser(identifier, value):
             return str(epoch - second)
         
 def parse_single_param(key, value):
+    try:
+        value = paramsSettings[key]["type"](value) # call the variable type class, which should also be the constructor
+    except ValueError as err:
+        raise ValueError(f"value of parameter '{key}' could not be converted to correct type, {paramsSettings[key]["type"]} ")
+    if key not in paramsSettings:
+        raise ValueError(f"'{key}' is not valid parameter")
     valueType = type(paramsSettings[key]["value"])
     if valueType == str: # is identifier
         return identifierParser(paramsSettings[key]["value"], value)
@@ -197,6 +203,7 @@ def process_params(paramsInput):
             key, value = param.split(":", maxsplit=1)
         except:
             continue
+        
         negative = False
         if value[0] == "!":
             if paramsSettings[key]["allowNegative"]:
@@ -204,13 +211,14 @@ def process_params(paramsInput):
                 value = value[1:]
             else:
                 raise ValueError(f"Parameter '{key}' may not be negative")
+        if len(parsedParams[key]) > 0 and not paramsSettings[key]["allowMultiple"]:
+            raise ValueError(f"Paramater '{key}' is only allowed once")
+        
         try:
             value = parse_single_param(key, value)
         except ValueError as err:
             raise ValueError(f"Something went wrong parsing parameter {i+1} ({key}: {value}): {err}") from err
         
-        if len(parsedParams[key]) > 0 and not paramsSettings[key]["allowMultiple"]:
-            raise ValueError(f"Paramater '{key}' is only allowed once")
         parsedParams[key].append({"value":value,"negative":negative})
     return parsedParams
 
@@ -228,11 +236,57 @@ def format_query(pos, params):
         else:
             tables = [value]
     tables = "UNION ALL ".join(map(lambda table: f"SELECT * FROM {table} ", tables))
+    
+    whereChecks = []
+    # position check
+    try:
+        radius = params["range"][0]["value"]
+    except:
+        radius = 1
+    whereChecks.append(f"""
+    (x - {pos[0]}) * (x - {pos[0]}) + 
+    (y - {pos[1]}) * (y - {pos[1]}) + 
+    (z - {pos[2]}) * (z - {pos[2]}) <= {radius**2}"""
+    ) 
+    # action check
+    for action in params["action"]:
+        whereChecks.append(f"interaction {"!" if action["negative"] else "="}= '{action["value"]}'")
+    # object check
+    for object in params["object"]:
+        whereChecks.append(f"block {"!" if object["negative"] else "="}= '{object["value"]}'")
+    # source check
+    for source in params["source"]:
+        whereChecks.append(f"username {"!" if source["negative"] else "="}= '{source["value"]}'")
+    # before
+    if len(params["before"]) > 0:
+        whereChecks.append(f"UNIX_time <= {params["before"][0]["value"]}")
+    # after
+    if len(params["after"]) > 0:
+        whereChecks.append(f"UNIX_time >= {params["after"][0]["value"]}")
 
 
-
-    dbQuery = f"SELECT * FROM ({tables})"
+    dbQuery = f"SELECT * FROM ({tables}) WHERE {" AND ".join(whereChecks)} ORDER BY UNIX_time desc"
+    print(dbQuery)
     return dbQuery
+
+def show_page(index, dbQuery, limit = 10, total = None):
+    actionDisplay = {
+        "p": "placed",
+        "b": "broke",
+        "r": "did 'r'",
+        "o": "opened",
+        "c": "did 'c'",
+    }
+    if total == None:
+        cursor.execute(f"SELECT COUNT(*) FROM ({dbQuery})")
+        total = cursor.fetchone()
+    cursor.execute(f"{dbQuery} LIMIT {index * limit}, {limit}")
+    results = cursor.fetchall()
+    sideWidth = 15
+    side = "="*sideWidth
+    print(f"{side}[ page {index+1}/{total} ]{side}")
+    for result in results:
+        print(f"[{result[7]}] {result[4]} {actionDisplay[result[3]]} {result[8]} at {" ".join(map(str,result[0:3]))}")
 
 # Main menu options
 # <x> <y> <z> <params>
@@ -248,6 +302,9 @@ def query():
     print(pos)
     print(params)
     dbQuery = format_query(pos, params)
+    cursor.execute(f"SELECT COUNT(*) FROM ({dbQuery})")
+    total = cursor.fetchone()
+    show_page(0, dbQuery, total = total)
 
 def player():
     while True:
