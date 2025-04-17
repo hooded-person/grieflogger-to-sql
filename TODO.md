@@ -1,0 +1,1 @@
+- [ ] make output more like ledger [See here](https://discord.com/channels/638990243587948555/1232757308103065793/1358201662329848050)
