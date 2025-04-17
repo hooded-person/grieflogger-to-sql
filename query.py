@@ -1,4 +1,6 @@
-import time, sys, os, sqlite3, re, datetime, json
+from copy import copy
+import optparse
+import time, sys, os, sqlite3, re, json
 from dotenv import load_dotenv
 
 # get the current working directory
@@ -38,6 +40,8 @@ assert os.getenv('LOG_EVERY').lower() in ("true", "t", "1") or os.getenv('LOG_EV
 
 # terminal colors
 class bcolors:
+    BLUE = '\033[34m'
+    CYAN = '\033[36m'
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
     OKCYAN = '\033[96m'
@@ -82,6 +86,27 @@ def option_menu(options,name=None, offset=0):
             return (choice, options[choice-offset])
         print(f"{bcolors.WARNING}Not a valid choice{bcolors.ENDC}")
         time.sleep(1)
+
+def formatTimeAgo(UNIXtime):
+    second = round(time.time()) - UNIXtime
+    minute, second = divmod(second, 60)
+    hour, minute = divmod(minute, 60)
+    day, hour = divmod(hour, 24)
+    year, day = divmod(day, 365)
+    week, day = divmod(day, 7)
+    times = [
+        (i[0] != 0, str(i[0])+i[1]) for i in [(year,"y"),(week,"w"), (day,"d"), (hour, "h"), (minute, "m"), (second, "s")]
+        ]
+    output = ""
+    last = False
+    for timeUnit in times:
+        lastSnap = last
+        if timeUnit[0]:
+            output += timeUnit[1]
+            last = True
+        if lastSnap:
+            break
+    return output
 
 # param parser
 identifiers = [
@@ -279,32 +304,80 @@ def show_page(index, dbQuery, limit = 10, total = None):
     }
     if total == None:
         cursor.execute(f"SELECT COUNT(*) FROM ({dbQuery})")
-        total = cursor.fetchone()
+        total = cursor.fetchone()[0]
     cursor.execute(f"{dbQuery} LIMIT {index * limit}, {limit}")
     results = cursor.fetchall()
     sideWidth = 15
     side = "="*sideWidth
-    print(f"{side}[ page {index+1}/{total} ]{side}")
+    print(f"{bcolors.CYAN}{side} Searching logs {side}{bcolors.ENDC}")
     for result in results:
-        print(f"[{result[7]}] {result[4]} {actionDisplay[result[3]]} {result[8]} at {" ".join(map(str,result[0:3]))}")
+        print(f"{formatTimeAgo(result[7])} ago {bcolors.BLUE}{result[4]}{bcolors.ENDC} {actionDisplay[result[3]]} {bcolors.OKBLUE}{result[8]}{bcolors.ENDC} {bcolors.BLUE}{" ".join(map(str,result[0:3]))}{bcolors.ENDC}")
+    print(f"{bcolors.CYAN}{side} << [Page {index+1} of {total}] >> {side}{bcolors.ENDC}")
+
+def mc_color_text(text, color):
+    return '{"color":"'+color+'","text":"' + text + '"}'
+
+def show_page_mc(index, dbQuery, limit = 10, total = None):
+    actionDisplay = {
+        "p": "placed",
+        "b": "broke",
+        "r": "did 'r'",
+        "o": "opened",
+        "c": "did 'c'",
+    }
+    if total == None:
+        cursor.execute(f"SELECT COUNT(*) FROM ({dbQuery})")
+        total = cursor.fetchone()[0]
+    cursor.execute(f"{dbQuery} LIMIT {index * limit}, {limit}")
+    results = cursor.fetchall()
+    sideWidth = 15
+    side = "="*sideWidth
+    output = []
+    output.append(mc_color_text(
+        f"{side} Searching logs {side}\n", "dark_aqua"))
+    for result in results:
+        output.append(mc_color_text(
+            f"{formatTimeAgo(result[7])} ago ", "white"))
+        output.append(mc_color_text(
+            f"{result[4]} ", "blue"))
+        output.append(mc_color_text(
+            f"{actionDisplay[result[3]]} ", "white"))
+        output.append(mc_color_text(
+            f"{result[8]} ", "aqua"))
+        output.append(mc_color_text(
+            f"{" ".join(map(str,result[0:3]))}", "blue"))
+    output.append(mc_color_text(
+        f"{side} << [Page {index+1} of {total}] >> {side}", "dark_aqua"))
+    return "[" + ",".join(output) + "]"
+
+def parse_query(query):
+    try:
+        posInput, paramsInput = re.search( r'((?:-?\d+ ?){3})(.*)',query).groups()
+    except AttributeError:
+        raise ValueError(f"Invalid query '{query}'")
+    pos = tuple(posInput.split(" ", maxsplit=2))
+    params = process_params(paramsInput)
+    return (pos,params)
 
 # Main menu options
 # <x> <y> <z> <params>
-def query():
-    queryInput = input("Enter query:\n")
-    try:
-        pos, paramsInput = re.search( r'((?:-?\d+ ?){3})(.*)',queryInput).groups()
-    except AttributeError:
-        raise ValueError("Invalid query")
-    pos = tuple(pos.split(" ", maxsplit=2))
-    params = process_params(paramsInput)
+def query(queryInput=None, pos=None,params=None,is_minecraft=False,page=0):
+    if pos == None or params == None:
+        if queryInput == None:
+            queryInput = input("Enter query:\n")
+        posInput, paramsInput = parse_query(queryInput)
+        pos = tuple(posInput.split(" ", maxsplit=2)) if pos == None else pos
+        params = process_params(paramsInput) if params == None else params
 
     print(pos)
     print(params)
     dbQuery = format_query(pos, params)
     cursor.execute(f"SELECT COUNT(*) FROM ({dbQuery})")
     total = cursor.fetchone()
-    show_page(0, dbQuery, total = total)
+    if is_minecraft:
+        show_page_mc(page, dbQuery, total = total)
+    else:
+        show_page(page, dbQuery, total = total)
 
 def player():
     while True:
@@ -400,19 +473,40 @@ def main():
             exit_prgm()
 
 if __name__ == "__main__":
-    (choice, option) = option_menu(["main","process_params","parse identifier"], offset=1)
-    match choice:
-        case 1:
-            main()
-        case 2:
-            print(
-                process_params(
-                    input("params:\n")
-            ))
-            
-        case 3:
-            print(
-                identifierParser(
-                    input("identifier key:\n"),
-                    input("identifier value:\n")
-            ))
+    def check_query(option, opt, value):
+        try:
+            queryData = parse_query(value)
+            return queryData
+        except ValueError as err:
+            raise optparse.OptionValueError(
+                f"option {opt}: {err}"
+            ) from err
+
+    class CustomOptionTypes(optparse.Option):
+        TYPES = optparse.Option.TYPES + ("query",)
+        TYPE_CHECKER = copy(optparse.Option.TYPE_CHECKER)
+        TYPE_CHECKER["query"] = check_query
+    
+    parser = optparse.OptionParser(option_class=CustomOptionTypes)
+
+    parser.add_option('-m', '--minecraft', dest='is_minecraft',
+        action='store_true',default=False,
+        help='Was this script called from minecraft (will return raw json text for mc rendering)')
+    parser.add_option('-q','--query', dest="query",
+        type="query",
+        help='Provide the query immediatly without going through the menu')
+    parser.add_option('-p','--page',dest='page',
+        default=0,type="int",
+        help='Query page to show')
+    
+    opts, args = parser.parse_args()
+
+    if opts.query != None:
+        query(
+            pos = opts.query[0],
+            params = opts.query[1],
+            is_minecraft = opts.is_minecraft,
+            page = opts.page if opts.page != None else 0
+            )
+    else:
+        main()
